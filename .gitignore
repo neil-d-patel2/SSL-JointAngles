@@ -1,1 +1,4 @@
 *.md
+.venv/
+checkpoints/
+__pycache__/

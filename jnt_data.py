@@ -25,6 +25,18 @@ def normalize_global(jnt):
     return (jnt - mean) / std, mean, std
 
 
+def fit_normalizer(jnt):
+    """Fit channel-wise normalization parameters on training samples only."""
+    mean = jnt.mean(axis=(0, 1), keepdims=True)
+    std = jnt.std(axis=(0, 1), keepdims=True)
+    std[std < 1e-6] = 1.0
+    return mean, std
+
+
+def apply_normalizer(jnt, mean, std):
+    return ((jnt - mean) / std).astype(np.float32)
+
+
 def subject_folds(subject_ids, n_splits=5):
     """Yield (train_idx, val_idx, val_subjects); no subject shared across a split."""
     n_splits = min(n_splits, len(np.unique(subject_ids)))

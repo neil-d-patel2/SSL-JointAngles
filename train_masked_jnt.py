@@ -4,6 +4,7 @@ One model learns all 3 directions; subject-stratified CV tests cross-subject gen
     python train_masked_jnt.py --data /path/to/gait_r_label_normalized+jnt.npz
 """
 import argparse
+import json
 import os
 
 import numpy as np
@@ -11,13 +12,16 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
 
-from jnt_data import load_jnt, normalize_global, subject_folds, CH_NAMES
+from jnt_data import (
+    apply_normalizer,
+    fit_normalizer,
+    load_jnt,
+    subject_folds,
+    CH_NAMES,
+)
 from jnt_models import MaskedJointModel
 from jnt_metrics import aggregate_per_cycle
 from jnt_engine import fit, get_device
-
-CKPT_DIR = "checkpoints"
-
 
 def masked_train_step(model, batch, device):
     """Random channel masked per sample; MSE on the masked channel only."""
@@ -48,12 +52,15 @@ def main():
     ap.add_argument("--epochs", type=int, default=80)
     ap.add_argument("--batch_size", type=int, default=32)
     ap.add_argument("--folds", type=int, default=5)
+    ap.add_argument("--output_dir", default="checkpoints")
+    ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
-    os.makedirs(CKPT_DIR, exist_ok=True)
+    os.makedirs(args.output_dir, exist_ok=True)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
 
     device = get_device()
     jnt, subject_ids = load_jnt(args.data)
-    jnt_n, mean, std = normalize_global(jnt)
     C = jnt.shape[2]
     print(f"Device: {device} | {jnt.shape[0]} cycles, "
           f"{len(np.unique(subject_ids))} subjects, {C} channels")
@@ -62,6 +69,8 @@ def main():
 
     for fold, (tr, va, val_subj) in enumerate(subject_folds(subject_ids, args.folds)):
         print(f"\n--- Fold {fold + 1} | held-out subjects: {val_subj.tolist()} ---")
+        mean, std = fit_normalizer(jnt[tr])
+        jnt_n = apply_normalizer(jnt, mean, std)
         tr_ld = DataLoader(TensorDataset(torch.tensor(jnt_n[tr])),
                            batch_size=args.batch_size, shuffle=True)
         va_ld = DataLoader(TensorDataset(torch.tensor(jnt_n[va])),
@@ -70,7 +79,15 @@ def main():
         model = MaskedJointModel(n_channels=C)
         fit(model, tr_ld, va_ld, masked_train_step, masked_val_step, device,
             epochs=args.epochs)
-        torch.save(model.state_dict(), f"{CKPT_DIR}/masked_jnt_fold{fold + 1}.pt")
+        stem = os.path.join(args.output_dir, f"masked_jnt_fold{fold + 1}")
+        torch.save(model.state_dict(), f"{stem}.pt")
+        np.savez(
+            f"{stem}_normalization.npz",
+            mean=mean,
+            std=std,
+            channel_names=np.asarray(CH_NAMES),
+            held_out_subjects=val_subj,
+        )
 
         # Per-direction evaluation, denormalized to physical units.
         model.eval()
@@ -96,6 +113,30 @@ def main():
         print(f"predict {CH_NAMES[c]:>4} | R {np.nanmean(r):.4f}+/-{np.nanstd(r):.4f}"
               f" | RMSE {np.nanmean(rmse):.4f}+/-{np.nanstd(rmse):.4f}"
               f" | NRMSE {np.nanmean(nr):.2f}%+/-{np.nanstd(nr):.2f}%")
+
+    summary = {
+        "model": "masked_joint",
+        "data": os.path.abspath(args.data),
+        "epochs": args.epochs,
+        "batch_size": args.batch_size,
+        "folds": args.folds,
+        "seed": args.seed,
+        "cycles": int(jnt.shape[0]),
+        "subjects": int(len(np.unique(subject_ids))),
+        "metrics": {
+            CH_NAMES[c]: {
+                metric: {
+                    "fold_values": [float(x) for x in per_dir[c][metric]],
+                    "mean": float(np.nanmean(per_dir[c][metric])),
+                    "std": float(np.nanstd(per_dir[c][metric])),
+                }
+                for metric in ("r", "rmse", "nrmse")
+            }
+            for c in range(C)
+        },
+    }
+    with open(os.path.join(args.output_dir, "masked_metrics.json"), "w") as f:
+        json.dump(summary, f, indent=2)
 
 
 if __name__ == "__main__":

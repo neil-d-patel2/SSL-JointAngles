@@ -38,6 +38,9 @@ def fit(model, train_loader, val_loader, train_step, val_step, device,
                 n += 1
         vloss = vtot / max(n, 1)
 
+        if verbose and (ep == 0 or (ep + 1) % 10 == 0 or ep + 1 == epochs):
+            print(f"    epoch {ep + 1:>3}/{epochs} | val {vloss:.5f}", flush=True)
+
         if vloss < best - 1e-6:
             best = vloss
             best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
