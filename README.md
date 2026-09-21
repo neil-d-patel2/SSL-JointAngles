@@ -75,3 +75,27 @@ subjects, plus the required normalization parameters:
 Five-fold held-out-subject metrics are stored as JSON in `results/`. Mean
 correlations for the masked model were 0.988 hip, 0.986 knee, and 0.938 ankle;
 for the pairwise models they were 0.991 hip, 0.990 knee, and 0.932 ankle.
+
+## Results figures
+
+![Five-fold metric summary](results/figures/cv_metrics_summary.png)
+
+![Out-of-fold reconstruction curves](results/figures/oof_reconstruction_curves.png)
+
+![Out-of-fold error distributions](results/figures/oof_error_distributions.png)
+
+Regenerate the metric summary from the checked-in JSON files:
+
+```bash
+python plot_results.py
+```
+
+To also regenerate the out-of-fold prediction figures, provide the processed
+dataset and both cross-validation checkpoint directories:
+
+```bash
+python plot_results.py \
+  --data joint_angles.npz \
+  --masked_checkpoints checkpoints/masked \
+  --pairwise_checkpoints checkpoints/pairwise
+```
