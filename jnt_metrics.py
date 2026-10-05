@@ -9,7 +9,10 @@ def get_metrics(y_true, y_pred):
     yt = np.asarray(y_true).flatten()
     yp = np.asarray(y_pred).flatten()
     rng = np.max(yt) - np.min(yt)
-    r, _ = pearsonr(yt, yp)
+    if np.ptp(yt) < 1e-8 or np.ptp(yp) < 1e-8:
+        r = np.nan
+    else:
+        r, _ = pearsonr(yt, yp)
     rmse = np.sqrt(mean_squared_error(yt, yp))
     nrmse = rmse / rng if rng > 1e-8 else np.nan
     cod = r2_score(yt, yp, force_finite=True)

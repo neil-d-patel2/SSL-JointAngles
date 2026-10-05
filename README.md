@@ -4,12 +4,15 @@ Self-supervised BiLSTM models for reconstructing sagittal hip, knee, and ankle
 angles. The learned temporal weights can initialize the LSTM in the dual-path
 model described in [the associated paper](https://arxiv.org/abs/2512.05030).
 
-Two designs are included:
+Three designs are included:
 
 - `MaskedJointModel`: masks one joint channel and reconstructs it from the
   other two.
 - `PairwiseJointModel`: three directional regressors, each predicting one joint
   from the other two.
+- Temporal masking: removes a contiguous 25% of the gait cycle from every joint
+  simultaneously, forcing the BiLSTM to learn temporal dynamics instead of a
+  same-time mapping between joints.
 
 ## Setup
 
@@ -51,6 +54,33 @@ python train_pairwise_jnt.py \
   --output_dir checkpoints/pairwise --seed 42
 ```
 
+## Subject-disjoint holdout testing
+
+Run the whole-channel and pairwise models on a fixed 70/15/15
+train/validation/test subject split:
+
+```bash
+python train_test_split_jnt.py \
+  --data joint_angles.npz --epochs 40 --batch_size 64 \
+  --output_dir checkpoints/test-split --seed 42
+```
+
+Run temporal masking on the identical subject split. The default hides one
+contiguous 25-point span from all three joints:
+
+```bash
+python train_temporal_masked_jnt.py \
+  --data joint_angles.npz --epochs 40 --batch_size 64 \
+  --output_dir checkpoints/temporal-test --seed 42 \
+  --mask_ratio 0.25 --span_length 25
+```
+
+On the untouched 15-subject test set, temporal masking achieved 2.63°, 3.75°,
+and 2.66° RMSE for hip, knee, and ankle at the hidden points. Linear
+interpolation on the same gaps produced 5.12°, 7.92°, and 5.83° RMSE. These
+temporal-inpainting scores are a different task and should not be compared
+directly with whole-channel reconstruction scores.
+
 ## Full-data training
 
 After cross-validation, train deployable weights on every usable cycle:
@@ -58,7 +88,8 @@ After cross-validation, train deployable weights on every usable cycle:
 ```bash
 python train_final_jnt.py \
   --data joint_angles.npz --epochs 40 --batch_size 64 \
-  --output_dir checkpoints/final --seed 42 --design both
+  --output_dir checkpoints/final --seed 42 --design all \
+  --mask_ratio 0.25 --span_length 25
 ```
 
 ## Included trained models
@@ -70,11 +101,14 @@ subjects, plus the required normalization parameters:
 - `pairwise_jnt_ch0_full.pt`: knee + ankle to hip
 - `pairwise_jnt_ch1_full.pt`: hip + ankle to knee
 - `pairwise_jnt_ch2_full.pt`: hip + knee to ankle
+- `temporal_masked_full.pt`: contiguous 25% temporal masking
 - `full_data_normalization.npz`
 
 Five-fold held-out-subject metrics are stored as JSON in `results/`. Mean
 correlations for the masked model were 0.988 hip, 0.986 knee, and 0.938 ankle;
 for the pairwise models they were 0.991 hip, 0.990 knee, and 0.932 ankle.
+The fixed holdout results for all three designs and the temporal interpolation
+baseline are also stored in `results/`.
 
 ## Results figures
 

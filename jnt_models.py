@@ -1,7 +1,8 @@
-"""Models for the joint-angle SSL task. Two designs share one BiLSTM core:
+"""Models for the joint-angle SSL task. Three designs share one BiLSTM core:
 
   MaskedJointModel   (A): mask one of 3 channels, reconstruct it (all directions, one model).
   PairwiseJointModel (B): predict 1 target channel from the other 2 (one model per direction).
+  Temporal masking  (C): mask selected time points across all channels and reconstruct them.
 
 The core mirrors GraphTemporalRegressor (Gait_DP-RGNet/model/utils.py) so its weights can
 later warm-start / constrain the main model's joint-angle head.
@@ -36,8 +37,7 @@ class BiLSTMRegressor(nn.Module):
 
 
 class MaskedJointModel(nn.Module):
-    """Design A. Input is [masked_angles(C), mask_flags(C)]; loss scored only on the
-    masked channel. Output reconstructs all C channels."""
+    """Masked reconstruction model for whole-channel or temporal masks."""
 
     def __init__(self, n_channels=3, lstm_hidden=256, lstm_layers=2,
                  bidirectional=True, dropout=0.3):
@@ -50,9 +50,17 @@ class MaskedJointModel(nn.Module):
         )
 
     def forward(self, x, mask):
-        """x: (B, T, C) angles. mask: (B, C) bool, True = channel to predict."""
+        """Apply a channel mask (B,C) or time/channel mask (B,T,C)."""
         B, T, C = x.shape
-        m = mask.unsqueeze(1).expand(B, T, C).float()
+        if mask.ndim == 2:
+            m = mask.unsqueeze(1).expand(B, T, C)
+        elif mask.ndim == 3 and mask.shape == x.shape:
+            m = mask
+        else:
+            raise ValueError(
+                f"mask must have shape (B,C) or (B,T,C); got {tuple(mask.shape)}"
+            )
+        m = m.float()
         feat = torch.cat([x * (1.0 - m), m], dim=-1)   # zero masked channels, append flags
         return self.core(feat)                         # (B, T, C)
 

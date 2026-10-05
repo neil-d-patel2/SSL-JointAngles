@@ -6,6 +6,7 @@ weights after model selection is complete.
 """
 
 import argparse
+from functools import partial
 import os
 
 import numpy as np
@@ -17,6 +18,7 @@ from jnt_engine import fit, get_device
 from jnt_models import MaskedJointModel, PairwiseJointModel
 from train_masked_jnt import masked_train_step, masked_val_step
 from train_pairwise_jnt import mse_step, split_src_tgt
+from train_temporal_masked_jnt import temporal_step
 
 
 def main():
@@ -26,7 +28,13 @@ def main():
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--output_dir", default="checkpoints/final")
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--design", choices=("both", "masked", "pairwise"), default="both")
+    parser.add_argument(
+        "--design",
+        choices=("all", "both", "masked", "pairwise", "temporal"),
+        default="both",
+    )
+    parser.add_argument("--mask_ratio", type=float, default=0.25)
+    parser.add_argument("--span_length", type=int, default=25)
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -50,7 +58,7 @@ def main():
         flush=True,
     )
 
-    if args.design in ("both", "masked"):
+    if args.design in ("all", "both", "masked"):
         print("\n--- Full-data masked model ---", flush=True)
         loader = DataLoader(
             TensorDataset(torch.tensor(jnt_n)),
@@ -73,7 +81,7 @@ def main():
         torch.save(model.state_dict(), os.path.join(args.output_dir, "masked_jnt_full.pt"))
         print(f"Saved masked_jnt_full.pt | reconstruction loss {best:.5f}", flush=True)
 
-    if args.design in ("both", "pairwise"):
+    if args.design in ("all", "both", "pairwise"):
         for target_c in range(jnt.shape[2]):
             source, target = split_src_tgt(jnt_n, target_c, jnt.shape[2])
             loader = DataLoader(
@@ -99,6 +107,45 @@ def main():
             path = os.path.join(args.output_dir, f"pairwise_jnt_ch{target_c}_full.pt")
             torch.save(model.state_dict(), path)
             print(f"Saved {os.path.basename(path)} | reconstruction loss {best:.5f}", flush=True)
+
+    if args.design in ("all", "temporal"):
+        print("\n--- Full-data temporal masked model ---", flush=True)
+        loader = DataLoader(
+            TensorDataset(torch.tensor(jnt_n)),
+            batch_size=args.batch_size,
+            shuffle=True,
+        )
+        eval_loader = DataLoader(
+            TensorDataset(torch.tensor(jnt_n)), batch_size=args.batch_size
+        )
+        train_step = partial(
+            temporal_step,
+            mask_ratio=args.mask_ratio,
+            span_length=args.span_length,
+            deterministic=False,
+        )
+        val_step = partial(
+            temporal_step,
+            mask_ratio=args.mask_ratio,
+            span_length=args.span_length,
+            deterministic=True,
+        )
+        model = MaskedJointModel(n_channels=jnt.shape[2])
+        best = fit(
+            model,
+            loader,
+            eval_loader,
+            train_step,
+            val_step,
+            device,
+            epochs=args.epochs,
+        )
+        path = os.path.join(args.output_dir, "temporal_masked_full.pt")
+        torch.save(model.state_dict(), path)
+        print(
+            f"Saved temporal_masked_full.pt | reconstruction loss {best:.5f}",
+            flush=True,
+        )
 
 
 if __name__ == "__main__":
